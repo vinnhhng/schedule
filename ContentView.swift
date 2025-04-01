@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var isLoggedIn = false
     @State private var userRole: String? = nil
+    @State private var currentUser: String? = nil
     @State private var users: [String: (password: String, role: String)] = ["manager": ("manager1!", "manager")]
     @State private var isDarkMode = false
     @State private var shifts: [Shift] = [] // Store shifts
@@ -18,7 +19,8 @@ struct ContentView: View {
                             Text("Home")
                         }
 
-                    CalendarView(shifts: shifts)
+                    // Pass currentUser to CalendarView so it can highlight matching shifts.
+                    CalendarView(shifts: shifts, currentUser: currentUser ?? "")
                         .tabItem {
                             Image(systemName: "calendar")
                             Text("Calendar")
@@ -32,7 +34,7 @@ struct ContentView: View {
                 }
                 .preferredColorScheme(isDarkMode ? .dark : .light)
             } else {
-                AuthView(isLoggedIn: $isLoggedIn, userRole: $userRole, users: $users)
+                AuthView(isLoggedIn: $isLoggedIn, userRole: $userRole, currentUser: $currentUser, users: $users)
             }
         }
     }
@@ -60,6 +62,7 @@ struct Availability {
 struct AuthView: View {
     @Binding var isLoggedIn: Bool
     @Binding var userRole: String?
+    @Binding var currentUser: String?
     @Binding var users: [String: (password: String, role: String)]
 
     @State private var email = ""
@@ -108,6 +111,8 @@ struct AuthView: View {
         if let user = users[email.lowercased()], user.password == password {
             userRole = user.role
             isLoggedIn = true
+            // Save the logged-in username.
+            currentUser = email.lowercased()
         } else {
             errorMessage = "Invalid credentials. Try again."
         }
@@ -258,29 +263,122 @@ struct ShiftCreator: View {
     }
 }
 
+// CalendarView now accepts a currentUser parameter to highlight matching shifts.
 struct CalendarView: View {
     var shifts: [Shift]
+    var currentUser: String
+    private let calendar = Calendar.current
+    @State private var expandedDay: Date? = nil
 
     var body: some View {
-        VStack {
-            HStack {
-                ForEach(0..<7, id: \.self) { index in
-                    Text(Calendar.current.weekdaySymbols[index])
-                        .frame(maxWidth: .infinity)
-                        .background(Color.gray.opacity(0.2))
+        // Horizontal scroll view for week days as square tiles
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 16) {
+                ForEach(0..<7, id: \.self) { offset in
+                    let day = calendar.date(byAdding: .day, value: offset, to: startOfWeek())!
+                    DayShiftSquare(
+                        day: day,
+                        shifts: shiftsForDay(day),
+                        isExpanded: expandedDay != nil && calendar.isDate(expandedDay!, inSameDayAs: day),
+                        currentUser: currentUser
+                    )
+                    .onTapGesture {
+                        if let expanded = expandedDay, calendar.isDate(expanded, inSameDayAs: day) {
+                            expandedDay = nil
+                        } else {
+                            expandedDay = day
+                        }
+                    }
                 }
             }
             .padding()
+        }
+    }
 
-            List(shifts) { shift in
-                VStack(alignment: .leading) {
-                    Text("\(shift.name) - \(shift.position)")
-                        .font(.headline)
-                    Text("\(shift.time) in section \(shift.section)")
-                        .font(.subheadline)
+    // Returns the start of the current week (assuming week starts on Sunday)
+    func startOfWeek() -> Date {
+        let today = Date()
+        let weekday = calendar.component(.weekday, from: today)
+        let start = calendar.date(byAdding: .day, value: -(weekday - 1), to: today)!
+        return calendar.startOfDay(for: start)
+    }
+
+    // Filters shifts for a given day.
+    func shiftsForDay(_ day: Date) -> [Shift] {
+        shifts.filter { calendar.isDate($0.date, inSameDayAs: day) }
+    }
+}
+
+struct DayShiftSquare: View {
+    let day: Date
+    let shifts: [Shift]
+    let isExpanded: Bool
+    let currentUser: String
+    private let calendar = Calendar.current
+
+    var body: some View {
+        VStack {
+            Text(dayFormatted())
+                .font(.headline)
+                .padding(.bottom, 4)
+
+            if isExpanded {
+                Divider()
+                if shifts.isEmpty {
+                    Text("No Shifts")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(shifts) { shift in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(shift.time)
+                                    .font(.subheadline)
+                                HStack {
+                                    // Highlight the shift name if it matches the current user.
+                                    if shift.name.lowercased() == currentUser.lowercased() {
+                                        Text(shift.name)
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(.blue)
+                                    } else {
+                                        Text(shift.name)
+                                            .font(.caption)
+                                    }
+                                    Text("• \(shift.position) • \(shift.section)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(4)
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(4)
+                        }
+                    }
+                }
+            } else {
+                if shifts.isEmpty {
+                    Text("No Shifts")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("\(shifts.count) Shift\(shifts.count > 1 ? "s" : "")")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
         }
+        .padding()
+        .frame(width: isExpanded ? 200 : 100, height: isExpanded ? 200 : 100)
+        .background(Color.blue.opacity(0.1))
+        .cornerRadius(8)
+        .animation(.easeInOut, value: isExpanded)
+    }
+
+    func dayFormatted() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE d"
+        return formatter.string(from: day)
     }
 }
 
